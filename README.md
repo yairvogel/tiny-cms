@@ -4,13 +4,13 @@ The tiniest CMS you can think of!
 - Flat-file
 - Markdown based (CommonMark compliant)
 - Developer-first experience
-- Cross-stack, cross programming, cross everything!
+- Cross-stack, cross programming language, cross everything!
 
 ## How does this work?
-Tiny CMS is a developer-first cms, based on simple markdown files and cli control.
+Tiny CMS is a developer-first cms, based on simple markdown files and CLI control.
 Tiny CMS lets you create posts, edit them in markdown and have them fully available in html.
 
-The CMS tool is not only a CLI tool for development, but rather can be an ultra tiny content delivery server, that can easily run beside any server, on any stack.
+The CMS tool is not only a CLI tool for development, but can rather be an ultra tiny content delivery server, that can easily run besides any server, on any stack.
 
 Tiny CMS is fully compatible with CommonMark as it uses [markdown-rs](https://github.com/wooorm/markdown-rs)
 
