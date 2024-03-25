@@ -9,3 +9,5 @@ edition = "2021"
 anyhow = "1.0.81"
 chrono = "0.4.35"
 clap = { version = "4.5.3", features = ["derive"] }
+colored = "2.1.0"
+markdown = "0.3.0"
