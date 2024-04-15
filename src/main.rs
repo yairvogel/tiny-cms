@@ -1,21 +1,17 @@
-use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
+use std::{path::{PathBuf, Path}, fs::File, io::{Write, Read}};
 
-use anyhow::Context;
-use anyhow::Error;
+use anyhow::{Error, Context};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use markdown;
+
+mod server;
+mod parser;
 
 const CONTENT_DIR: &str = "content";
-const SRC_DIR: &str = "src";
 const PUBLISH_DIR: &str = "publish";
+const SRC_DIR: &str = "src";
 const METADATA_FILE: &str = ".cms";
-
 
 #[derive(Parser, Debug)]
 struct Args
@@ -32,21 +28,33 @@ enum Command {
     },
     New {
         #[arg(short, long)]
-        name: String
+        title: String
     },
-    Publish
+    Publish {
+        #[arg(long, default_value = PUBLISH_DIR)]
+        publish_dir: String
+    },
+    Serve
 }
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
     match args.cmd {
         Command::Init { content_dir } => init(content_dir),
-        Command::New { name } => new(name),
-        Command::Publish => publish()
+        Command::New { title } => new(title),
+        Command::Publish { publish_dir } => publish(&publish_dir),
+        Command::Serve => serve(),
     }
 }
 
-fn init(content_dir: String) -> Result<(), Error> {
+#[derive(Debug)]
+pub struct Post {
+    pub title: String,
+    pub published: DateTime::<Utc>,
+    pub content: String
+}
+
+pub fn init(content_dir: String) -> Result<(), Error> {
     if Path::new(METADATA_FILE).exists() {
         return Err(Error::msg("cms is already initialized"))
     }
@@ -55,65 +63,62 @@ fn init(content_dir: String) -> Result<(), Error> {
     file.write_all(content_dir.as_bytes()).context("writing .cms file")?;
 
     let src_dir = PathBuf::from(&content_dir).join("src");
-    fs::create_dir_all(&src_dir).context("creating content directory")?;
+    std::fs::create_dir_all(&src_dir).context("creating content directory")?;
     println!("initialized cms at {}", &content_dir);
     Ok(())
 }
 
-fn new(name: String) -> Result<(), Error> {
+fn new(title: String) -> Result<(), Error> {
     let content_dir = get_content_dir().context("Could not get content directory")?;
     let src_dir = content_dir.join(SRC_DIR);
-    let new_file_path = src_dir.join(&name);
+    let new_file_path = src_dir.join(&title);
     if new_file_path.exists() {
-        return Err(Error::msg(format!("post name '{}' already exists", &name)))
+        return Err(Error::msg(format!("post titled '{}' already exists", &title)))
     }
 
     let mut file = File::create(&new_file_path.with_extension("md")).context("Failed to create a new post file")?;
-    let content = format!("------------------\nname: {}\ndate published: {}\n------------------\n", &name, chrono::offset::Utc::now().format("%d/%m/%Y %H:%M"));
+    let content = format!("------------------\ntitle: {}\ndate published: {}\n------------------\n", &title, chrono::offset::Utc::now().format("%d/%m/%Y %H:%M"));
     file.write_all(content.as_bytes()).context("writing file metadata")?;
-    println!("created empty post named at {}", &new_file_path.to_str().or(Some(&name)).unwrap());
+    println!("created empty post titled {}", &new_file_path.to_str().or(Some(&title)).unwrap());
     Ok(())
 }
 
-fn publish() -> Result<(), Error> {
+fn publish(publish_dir: &str) -> Result<(), Error> {
     let content_dir = get_content_dir().context("Could not get content directory")?;
     let src_dir = content_dir.join(SRC_DIR);
-    let target_dir = content_dir.join(PUBLISH_DIR);
+    let target_dir = content_dir.join(publish_dir);
     if target_dir.exists() {
-        fs::remove_dir_all(&target_dir).context("Failed cleaning the publish directory")?;
+        std::fs::remove_dir_all(&target_dir).context("Failed cleaning the publish directory")?;
     }
 
-    fs::create_dir(&target_dir).context("failed creating the publish directory")?;
+    std::fs::create_dir(&target_dir).context("failed creating the publish directory")?;
 
     let mut published = 0;
     for entry in src_dir.read_dir().context("failed reading the source directory")? {
         let entry = entry.context("failed to read source directory entry")?;
         let mut source = File::open(&entry.path()).context("failed opening the source md file")?;
 
-        let mut md_content = String::new();
-        source.read_to_string(&mut md_content).context("failed reading the markdown file to string")?;
+        let post = parser::parse(&mut source)?;
 
         // searching for the second line of dashes, pos will mark the point where the actual
         // content starts
-        let mut pos = md_content.find("---").ok_or(Error::msg("couldn't find metadata section for markdown file"))?;
-        pos += md_content[pos+1..].find("\n").ok_or(Error::msg("couldn't find metadata section for markdown file"))?;
-        pos += md_content[pos+1..].find("---").ok_or(Error::msg("couldn't find metadata section for markdown file"))?;
-        pos += md_content[pos+1..].find("\n").ok_or(Error::msg("couldn't find metadata section for markdown file"))?;
-        pos += 2;
-
-        let only_md = &md_content[pos..];
-        if only_md.len() == 0 {
+        if post.content.len() == 0 {
             let warn = format!("post '{}' is empty", &entry.file_name().to_str().unwrap_or("unknown"));
             println!("{}", warn.yellow());
         }
 
-        let html = markdown::to_html(only_md);
+        let html = markdown::to_html(&post.content);
         let mut target = File::create(target_dir.join(entry.file_name()).with_extension("html")).context("failed creating target html file")?;
         target.write_all(html.as_bytes()).context("failed writing html string to target html file")?;
         published += 1;
     }
 
     println!("published {} files", published);
+    Ok(())
+}
+
+fn serve() -> Result<(), Error> {
+    server::run_server("");
     Ok(())
 }
 
@@ -126,4 +131,69 @@ fn get_content_dir() -> Result<PathBuf, Error> {
     let mut content_dir = String::new();
     file.read_to_string(&mut content_dir).context("read metadata context")?;
     Ok(PathBuf::from(content_dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use test_context::{TestContext, test_context};
+    use rand::{thread_rng, Rng};
+    use rand::distributions::Alphanumeric;
+
+    struct DirectoryContext {
+        directory: String
+    }
+
+    impl TestContext for DirectoryContext {
+        fn setup() -> Self {
+            let directory = thread_rng().sample_iter(&Alphanumeric)
+                .take(10)
+                .map(char::from)
+                .collect();
+            println!("{}\n", &directory);
+            std::fs::create_dir(&directory).unwrap();
+            std::env::set_current_dir(&directory).unwrap();
+            Self { directory }
+        }
+
+        fn teardown(self) {
+            std::env::set_current_dir("..").unwrap();
+            std::fs::remove_dir_all(&self.directory).unwrap();
+        }
+    }
+
+    #[test_context(DirectoryContext)]
+    #[test]
+    fn init(_: &mut DirectoryContext) {
+        crate::init("init".to_string()).expect("should be able to init");
+        assert_eq!(Path::new("init/src").exists(), true, "failed to create content dir");
+        assert_eq!(Path::new(".cms").exists(), true, "failed to create .cms file");
+    }
+
+    #[test_context(DirectoryContext)]
+    #[test]
+    fn new_empty_post(_: &mut DirectoryContext) {
+        crate::init("init".to_string()).expect("failed to init");
+        crate::new("hello-world".to_string()).expect("failed to new");
+
+        let path = Path::new("init/src/hello-world.md");
+        assert_eq!(path.exists(), true);
+
+        let mut file = std::fs::File::open(path).unwrap();
+        let post = crate::parser::parse(&mut file).unwrap();
+
+        assert_eq!(post.title.as_str(), "hello-world");
+        assert_eq!(post.published > chrono::Utc::now() - chrono::TimeDelta::try_minutes(1).unwrap(), true);
+        assert_eq!(post.content.is_empty(), true);
+    }
+
+    #[test_context(DirectoryContext)]
+    #[test]
+    fn publish_empty_post(_: &mut DirectoryContext) {
+        crate::init("init".to_string()).expect("failed to init");
+        crate::new("hello-world".to_string()).expect("failed to new");
+        crate::publish(crate::PUBLISH_DIR).expect("failed to publish");
+        
+        let path = Path::new("init/publish");
+    }
 }
