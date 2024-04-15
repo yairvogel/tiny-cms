@@ -135,6 +135,7 @@ fn get_content_dir() -> Result<PathBuf, Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
     use std::path::Path;
     use test_context::{TestContext, test_context};
     use rand::{thread_rng, Rng};
@@ -194,6 +195,31 @@ mod tests {
         crate::new("hello-world".to_string()).expect("failed to new");
         crate::publish(crate::PUBLISH_DIR).expect("failed to publish");
         
-        let path = Path::new("init/publish");
+        let path = Path::new("init/publish/hello-world.html");
+        assert_eq!(path.exists(), true);
+        let mut file = std::fs::File::open(path).unwrap();
+        let mut buf = Vec::new();
+        let len = file.read_to_end(&mut buf).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(buf[0], b'\n');
+    }
+
+    #[test_context(DirectoryContext)]
+    #[test]
+    fn publish_html_conversion(_: &mut DirectoryContext) {
+        crate::init("init".to_string()).expect("failed to init");
+        crate::new("hello-world".to_string()).expect("failed to new");
+        let path = Path::new("init/src/hello-world.md");
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        file.write_all(b"\n# h1 title\na paragraph").expect("failed to write to file");
+        crate::publish(crate::PUBLISH_DIR).expect("failed to publish");
+
+        let path = Path::new("init/publish/hello-world.html");
+        assert_eq!(path.exists(), true);
+        let mut buf = Vec::new();
+        _ = std::fs::File::open(path).unwrap().read_to_end(&mut buf);
+        let str = std::str::from_utf8(&buf).unwrap();
+
+        assert_eq!(str.trim(), "<h1 id='h1_title'>h1 title</h1>\n\n<p>a paragraph</p>");
     }
 }
