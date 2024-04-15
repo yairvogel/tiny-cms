@@ -4,6 +4,8 @@ use anyhow::{Error, Context};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use markdown::Block;
+use syntect::parsing::SyntaxSet;
 
 mod server;
 mod parser;
@@ -34,7 +36,8 @@ enum Command {
         #[arg(long, default_value = PUBLISH_DIR)]
         publish_dir: String
     },
-    Serve
+    Serve,
+    Markdown
 }
 
 fn main() -> Result<(), Error> {
@@ -44,6 +47,7 @@ fn main() -> Result<(), Error> {
         Command::New { title } => new(title),
         Command::Publish { publish_dir } => publish(&publish_dir),
         Command::Serve => serve(),
+        Command::Markdown => markdown()
     }
 }
 
@@ -100,8 +104,6 @@ fn publish(publish_dir: &str) -> Result<(), Error> {
 
         let post = parser::parse(&mut source)?;
 
-        // searching for the second line of dashes, pos will mark the point where the actual
-        // content starts
         if post.content.len() == 0 {
             let warn = format!("post '{}' is empty", &entry.file_name().to_str().unwrap_or("unknown"));
             println!("{}", warn.yellow());
@@ -114,6 +116,24 @@ fn publish(publish_dir: &str) -> Result<(), Error> {
     }
 
     println!("published {} files", published);
+    Ok(())
+}
+
+fn markdown() -> Result<(), Error> {
+    let content_dir = get_content_dir().context("Could not get content directory")?;
+    let src_dir = content_dir.join(SRC_DIR);
+    for entry in src_dir.read_dir().context("failed reading the source directory")? {
+        let entry = entry.context("failed to read source directory entry")?;
+        let mut source = File::open(&entry.path()).context("failed opening the source md file")?;
+
+        let post = parser::parse(&mut source)?;
+        let md = markdown::tokenize(&post.content);
+        println!("{} blocks:", &entry.file_name().to_str().unwrap_or("unknown"));
+        for block in md {
+            println!("\t{:?}", block);
+        }
+    }
+
     Ok(())
 }
 
